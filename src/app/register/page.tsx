@@ -24,14 +24,39 @@ export default function RegisterPage() {
   const [departments, setDepartments] = useState<Department[]>([])
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [deptLoading, setDeptLoading] = useState(true)
   const { signUp } = useAuth()
   const router = useRouter()
   const supabase = createClient()
 
+  // Default departments if none exist in database
+  const defaultDepartments: Department[] = [
+    { id: '1', name: 'Computer Science', description: 'Computer Science Department', created_at: new Date().toISOString() },
+    { id: '2', name: 'Engineering', description: 'Engineering Department', created_at: new Date().toISOString() },
+    { id: '3', name: 'Business', description: 'Business Department', created_at: new Date().toISOString() },
+    { id: '4', name: 'Science', description: 'Science Department', created_at: new Date().toISOString() },
+    { id: '5', name: 'Arts', description: 'Arts Department', created_at: new Date().toISOString() },
+  ]
+
   useEffect(() => {
     const fetchDepartments = async () => {
-      const { data } = await supabase.from('departments').select('*').order('name')
-      if (data) setDepartments(data)
+      try {
+        setDeptLoading(true)
+        const { data, error } = await supabase.from('departments').select('*').order('name')
+        if (error) {
+          console.error('Error fetching departments:', error)
+          setDepartments(defaultDepartments)
+        } else if (data && data.length > 0) {
+          setDepartments(data)
+        } else {
+          setDepartments(defaultDepartments)
+        }
+      } catch (err) {
+        console.error('Error:', err)
+        setDepartments(defaultDepartments)
+      } finally {
+        setDeptLoading(false)
+      }
     }
     fetchDepartments()
   }, [])
@@ -134,14 +159,16 @@ export default function RegisterPage() {
               
               <div className="space-y-2">
                 <Label htmlFor="department">Department</Label>
-                <Select value={department} onValueChange={setDepartment}>
+                <Select value={department} onValueChange={setDepartment} disabled={deptLoading}>
                   <SelectTrigger className="h-11">
                     <Building2 className="h-4 w-4 mr-2 text-muted-foreground" />
-                    <SelectValue placeholder="Select dept" />
+                    <SelectValue placeholder={deptLoading ? "Loading..." : "Select dept"} />
                   </SelectTrigger>
                   <SelectContent>
-                    {departments.map((dept) => (
-                      <SelectItem key={dept.id} value={dept.name}>{dept.name}</SelectItem>
+                    {departments && departments.length > 0 && departments.map((dept) => (
+                      <SelectItem key={dept.id} value={dept.name}>
+                        {dept.name}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
