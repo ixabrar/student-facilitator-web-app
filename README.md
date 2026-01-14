@@ -1,36 +1,140 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🎓 EduHub - Student Facilitator Platform
 
-## Getting Started
+A modern, full-featured web application for managing academic activities. Built for students, faculty, and administrators to collaborate and stay organized.
 
-First, run the development server:
+## ✨ Key Features
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- **👤 User Management**: Role-based access (Student, Faculty, Admin)
+- **📚 Course Management**: Create, enroll, and manage courses
+- **✍️ Assignments**: Upload, submit, and grade assignments
+- **📖 Study Materials**: Share and access course materials
+- **📅 Timetable**: View class schedules and exam dates
+- **✔️ Attendance**: Track attendance records
+- **💬 Messaging**: Direct messaging between users
+- **📢 Notices**: Global and department-specific announcements
+- **🎉 Events**: Manage campus events and activities
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Node.js 18+ 
+- npm or yarn
+- A Supabase account (free tier available)
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/ixabrar/student-facilitator-web-app.git
+   cd student-facilitator-web-app
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install --legacy-peer-deps
+   ```
+
+3. **Set up environment variables**
+   
+   Create a `.env.local` file:
+   ```bash
+   NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
+   ```
+   
+   Get these from your [Supabase Dashboard](https://supabase.com/dashboard)
+
+4. **Start the development server**
+   ```bash
+   npm run dev
+   ```
+
+5. **Open in browser**
+   
+   Visit [http://localhost:3000](http://localhost:3000)
+
+## 📁 Project Structure
+
+```
+src/
+├── app/                    # Next.js pages
+│   ├── page.tsx           # Homepage
+│   ├── login/             # Login page
+│   ├── register/          # Registration page
+│   └── dashboard/         # Protected dashboard routes
+├── components/            # Reusable React components
+│   ├── ui/               # Pre-built UI components
+│   └── providers/        # Auth provider
+├── lib/                   # Utilities and helpers
+│   └── supabase/         # Database client setup
+└── middleware.ts          # Next.js middleware
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 🛠️ Technology Stack
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+**Frontend:**
+- [Next.js 15](https://nextjs.org) - React framework
+- [React 19](https://react.dev) - UI library
+- [TypeScript](https://www.typescriptlang.org/) - Type safety
+- [Tailwind CSS](https://tailwindcss.com) - Styling
+- [Radix UI](https://www.radix-ui.com) - Accessible components
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**Backend & Database:**
+- [Supabase](https://supabase.com) - Backend as a Service
+- PostgreSQL - Database
+- [Drizzle ORM](https://orm.drizzle.team) - Database toolkit
 
-## Learn More
+**Auth:**
+- Supabase Auth - Email/password authentication
 
-To learn more about Next.js, take a look at the following resources:
+## 🗄️ Database Schema
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+The project uses 12 main tables:
+- `profiles` - User information
+- `departments` - Academic departments
+- `courses` - Course catalog
+- `student_courses` - Student enrollments
+- `assignments` - Course assignments
+- `assignment_submissions` - Student submissions
+- `study_materials` - Course materials
+- `timetable` - Class schedules
+- `attendance` - Attendance records
+- `messages` - Private messaging
+- `notices` - Announcements
+- `events` - Campus events
+- `exam_schedules` - Exam planning
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## 🔐 Security
 
-## Deploy on Vercel
+- ✅ Environment variables for sensitive data
+- ✅ Never commit `.env.local` to git
+- ✅ Row-Level Security (RLS) ready with Supabase
+- ✅ Password hashing with bcrypt
+- ✅ Session-based authentication
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## 📦 Available Scripts
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run dev      # Start development server
+npm run build    # Build for production
+npm run start    # Start production server
+npm run lint     # Run ESLint
+```
+
+## 🤝 Contributing
+
+Feel free to submit issues and enhancement requests!
+
+## 📄 License
+
+This project is open source and available under the MIT License.
+
+## 🆘 Need Help?
+
+- **Documentation**: Check the [Next.js docs](https://nextjs.org/docs)
+- **Supabase**: Visit [Supabase docs](https://supabase.com/docs)
+- **TypeScript**: See [TypeScript handbook](https://www.typescriptlang.org/docs/)
+
+---
+
+**Happy coding!** 🚀
