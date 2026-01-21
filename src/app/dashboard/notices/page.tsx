@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/components/providers/auth-provider'
-import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,7 +13,29 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { Bell, Plus, Trash2, Edit, AlertCircle, Info, AlertTriangle } from 'lucide-react'
-import type { Notice, Profile } from '@/lib/supabase/types'
+
+// MongoDB TypeScript Interfaces
+interface Profile {
+  _id: string
+  fullName: string
+  email: string
+  role: 'student' | 'faculty' | 'admin'
+  createdAt: string
+  updatedAt: string
+}
+
+interface Notice {
+  _id: string
+  title: string
+  content: string
+  type: 'general' | 'academic' | 'event' | 'exam' | 'urgent'
+  priority: 'low' | 'normal' | 'high'
+  isGlobal: boolean
+  authorId: string
+  author?: Profile
+  createdAt: string
+  updatedAt: string
+}
 
 export default function NoticesPage() {
   const { profile } = useAuth()
@@ -29,16 +50,23 @@ export default function NoticesPage() {
     priority: 'normal',
     is_global: true
   })
-  const supabase = createClient()
 
   const fetchNotices = async () => {
-    const { data } = await supabase
-      .from('notices')
-      .select('*, author:profiles(*)')
-      .order('created_at', { ascending: false })
-    
-    if (data) setNotices(data as Notice[])
-    setLoading(false)
+    try {
+      const token = localStorage.getItem('authToken')
+      const headers = token ? { Authorization: `Bearer ${token}` } : {}
+      
+      const response = await fetch('/api/notices?limit=50', { headers })
+      if (!response.ok) throw new Error('Failed to fetch notices')
+      const data = await response.json()
+      setNotices(Array.isArray(data) ? data : [])
+    } catch (error) {
+      toast.error('Failed to load notices')
+      console.error(error)
+      setNotices([])
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -53,49 +81,54 @@ export default function NoticesPage() {
       content: formData.content,
       type: formData.type,
       priority: formData.priority,
-      is_global: formData.is_global,
-      author_id: profile?.id
+      isGlobal: formData.is_global,
+      authorId: profile?.userId
     }
 
-    if (editingNotice) {
-      const { error } = await supabase
-        .from('notices')
-        .update(noticeData)
-        .eq('id', editingNotice.id)
-      
-      if (error) {
-        toast.error(error.message)
-        return
+    try {
+      if (editingNotice) {
+        const response = await fetch(`/api/notices/${editingNotice._id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(noticeData)
+        })
+        
+        if (!response.ok) throw new Error('Failed to update notice')
+        toast.success('Notice updated successfully')
+      } else {
+        const response = await fetch('/api/notices', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(noticeData)
+        })
+        
+        if (!response.ok) throw new Error('Failed to post notice')
+        toast.success('Notice posted successfully')
       }
-      toast.success('Notice updated successfully')
-    } else {
-      const { error } = await supabase.from('notices').insert(noticeData)
-      
-      if (error) {
-        toast.error(error.message)
-        return
-      }
-      toast.success('Notice posted successfully')
-    }
 
-    setDialogOpen(false)
-    setEditingNotice(null)
-    setFormData({ title: '', content: '', type: 'general', priority: 'normal', is_global: true })
-    fetchNotices()
+      setDialogOpen(false)
+      setEditingNotice(null)
+      setFormData({ title: '', content: '', type: 'general', priority: 'normal', is_global: true })
+      fetchNotices()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Something went wrong')
+    }
   }
 
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this notice?')) return
     
-    const { error } = await supabase.from('notices').delete().eq('id', id)
-    
-    if (error) {
-      toast.error(error.message)
-      return
+    try {
+      const response = await fetch(`/api/notices/${id}`, {
+        method: 'DELETE'
+      })
+      
+      if (!response.ok) throw new Error('Failed to delete notice')
+      toast.success('Notice deleted successfully')
+      fetchNotices()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete notice')
     }
-    
-    toast.success('Notice deleted successfully')
-    fetchNotices()
   }
 
   const openEditDialog = (notice: Notice) => {
@@ -233,7 +266,7 @@ export default function NoticesPage() {
       ) : (
         <div className="space-y-4">
           {notices.map((notice) => (
-            <Card key={notice.id} className="hover:shadow-md transition-shadow">
+            <Card key={notice._id} className="hover:shadow-md transition-shadow">
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between">
                   <div className="flex items-start gap-3">
@@ -241,7 +274,7 @@ export default function NoticesPage() {
                     <div>
                       <CardTitle className="text-lg">{notice.title}</CardTitle>
                       <CardDescription>
-                        Posted by {(notice.author as Profile)?.full_name || 'Unknown'} • {format(new Date(notice.created_at), 'MMM d, yyyy')}
+                        Posted by {notice.author?.fullName || 'Unknown'} • {format(new Date(notice.createdAt), 'MMM d, yyyy')}
                       </CardDescription>
                     </div>
                   </div>
@@ -255,13 +288,13 @@ export default function NoticesPage() {
               </CardHeader>
               <CardContent>
                 <p className="text-slate-600 whitespace-pre-wrap">{notice.content}</p>
-                {canManage && notice.author_id === profile.id && (
+                {canManage && notice.authorId === profile.id && (
                   <div className="flex gap-2 mt-4 pt-4 border-t">
                     <Button size="sm" variant="outline" onClick={() => openEditDialog(notice)}>
                       <Edit className="h-4 w-4 mr-1" />
                       Edit
                     </Button>
-                    <Button size="sm" variant="destructive" onClick={() => handleDelete(notice.id)}>
+                    <Button size="sm" variant="destructive" onClick={() => handleDelete(notice._id)}>
                       <Trash2 className="h-4 w-4 mr-1" />
                       Delete
                     </Button>
@@ -275,3 +308,4 @@ export default function NoticesPage() {
     </div>
   )
 }
+

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/components/providers/auth-provider'
-import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -11,7 +10,13 @@ import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { toast } from 'sonner'
 import { Building2, Plus, Trash2, Edit, Shield } from 'lucide-react'
-import type { Department } from '@/lib/supabase/types'
+
+interface Department {
+  _id: string
+  name: string
+  description: string | null
+  createdAt: string
+}
 
 export default function DepartmentsPage() {
   const { profile } = useAuth()
@@ -21,18 +26,26 @@ export default function DepartmentsPage() {
   const [editingDepartment, setEditingDepartment] = useState<Department | null>(null)
   const [formData, setFormData] = useState({
     name: '',
+    abbreviation: '',
     description: ''
   })
-  const supabase = createClient()
 
   const fetchDepartments = async () => {
-    const { data } = await supabase.from('departments').select('*').order('name')
-    if (data) setDepartments(data)
-    setLoading(false)
+    try {
+      const response = await fetch('/api/departments')
+      if (response.ok) {
+        const data = await response.json()
+        setDepartments(data)
+      }
+    } catch (error) {
+      console.error('Error fetching departments:', error)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
-    if (profile?.role === 'admin') {
+    if (profile?.role === 'admin' || profile?.role === 'principal') {
       fetchDepartments()
     }
   }, [profile])
@@ -40,63 +53,84 @@ export default function DepartmentsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    if (editingDepartment) {
-      const { error } = await supabase
-        .from('departments')
-        .update({
-          name: formData.name,
-          description: formData.description || null
+    try {
+      if (editingDepartment) {
+        const response = await fetch(`/api/departments/${editingDepartment._id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: formData.name,
+            abbreviation: formData.abbreviation,
+            description: formData.description || null
+          })
         })
-        .eq('id', editingDepartment.id)
-      
-      if (error) {
-        toast.error(error.message)
-        return
+        
+        if (response.ok) {
+          toast.success('Department updated successfully')
+          setEditingDepartment(null)
+          setFormData({ name: '', abbreviation: '', description: '' })
+          setDialogOpen(false)
+          fetchDepartments()
+        } else {
+          toast.error('Failed to update department')
+        }
+      } else {
+        const response = await fetch('/api/departments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: formData.name,
+            abbreviation: formData.abbreviation,
+            description: formData.description || null
+          })
+        })
+        
+        if (response.ok) {
+          toast.success('Department created successfully')
+          setFormData({ name: '', abbreviation: '', description: '' })
+          setDialogOpen(false)
+          fetchDepartments()
+        } else {
+          toast.error('Failed to create department')
+        }
       }
-      toast.success('Department updated successfully')
-    } else {
-      const { error } = await supabase.from('departments').insert({
-        name: formData.name,
-        description: formData.description || null
-      })
-      
-      if (error) {
-        toast.error(error.message)
-        return
-      }
-      toast.success('Department created successfully')
+    } catch (error) {
+      console.error('Error:', error)
+      toast.error('An error occurred')
     }
-
-    setDialogOpen(false)
-    setEditingDepartment(null)
-    setFormData({ name: '', description: '' })
-    fetchDepartments()
   }
 
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this department?')) return
     
-    const { error } = await supabase.from('departments').delete().eq('id', id)
-    
-    if (error) {
-      toast.error(error.message)
-      return
+    try {
+      const response = await fetch(`/api/departments/${id}`, {
+        method: 'DELETE'
+      })
+      
+      if (response.ok) {
+        toast.success('Department deleted successfully')
+        fetchDepartments()
+      } else {
+        toast.error('Failed to delete department')
+      }
+    } catch (error) {
+      console.error('Error:', error)
+      toast.error('An error occurred')
     }
-    
-    toast.success('Department deleted successfully')
-    fetchDepartments()
   }
 
   const openEditDialog = (department: Department) => {
     setEditingDepartment(department)
     setFormData({
-      name: department.name,
+      name: department.name || '',
+      abbreviation: (department as any).abbreviation || '',
       description: department.description || ''
     })
     setDialogOpen(true)
   }
 
-  if (!profile || profile.role !== 'admin') {
+  if (!profile || (profile.role !== 'admin' && profile.role !== 'principal')) {
     return (
       <Card>
         <CardContent className="flex flex-col items-center justify-center py-12">
@@ -112,21 +146,22 @@ export default function DepartmentsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Departments</h1>
-          <p className="text-muted-foreground">Manage academic departments</p>
+          <p className="text-muted-foreground">{profile.role === 'principal' ? 'View all academic departments' : 'Manage academic departments'}</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={(open) => {
-          setDialogOpen(open)
-          if (!open) {
-            setEditingDepartment(null)
-            setFormData({ name: '', description: '' })
-          }
-        }}>
-          <DialogTrigger asChild>
-            <Button className="bg-gradient-to-r from-blue-600 to-indigo-600">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Department
-            </Button>
-          </DialogTrigger>
+        {profile.role === 'admin' && (
+          <Dialog open={dialogOpen} onOpenChange={(open) => {
+            setDialogOpen(open)
+            if (!open) {
+              setEditingDepartment(null)
+              setFormData({ name: '', abbreviation: '', description: '' })
+            }
+          }}>
+            <DialogTrigger asChild>
+              <Button className="bg-gradient-to-r from-blue-600 to-indigo-600">
+                <Plus className="h-4 w-4 mr-2" />
+                Add Department
+              </Button>
+            </DialogTrigger>
           <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle>{editingDepartment ? 'Edit Department' : 'Add Department'}</DialogTitle>
@@ -140,6 +175,17 @@ export default function DepartmentsPage() {
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="Computer Science"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="abbreviation">Abbreviation</Label>
+                <Input
+                  id="abbreviation"
+                  value={formData.abbreviation}
+                  onChange={(e) => setFormData({ ...formData, abbreviation: e.target.value.toUpperCase() })}
+                  placeholder="CS"
+                  maxLength={10}
                   required
                 />
               </div>
@@ -159,6 +205,7 @@ export default function DepartmentsPage() {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       {loading ? (
@@ -181,7 +228,7 @@ export default function DepartmentsPage() {
       ) : (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           {departments.map((department) => (
-            <Card key={department.id} className="hover:shadow-lg transition-shadow">
+            <Card key={department._id} className="hover:shadow-lg transition-shadow">
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
@@ -196,16 +243,18 @@ export default function DepartmentsPage() {
                 {department.description && (
                   <p className="text-sm text-muted-foreground">{department.description}</p>
                 )}
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => openEditDialog(department)}>
-                    <Edit className="h-4 w-4 mr-1" />
-                    Edit
-                  </Button>
-                  <Button size="sm" variant="destructive" onClick={() => handleDelete(department.id)}>
-                    <Trash2 className="h-4 w-4 mr-1" />
-                    Delete
-                  </Button>
-                </div>
+                {profile.role === 'admin' && (
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => openEditDialog(department)}>
+                      <Edit className="h-4 w-4 mr-1" />
+                      Edit
+                    </Button>
+                    <Button size="sm" variant="destructive" onClick={() => handleDelete(department._id)}>
+                      <Trash2 className="h-4 w-4 mr-1" />
+                      Delete
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -214,3 +263,4 @@ export default function DepartmentsPage() {
     </div>
   )
 }
+

@@ -1,14 +1,31 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
-import { User, Session } from '@supabase/supabase-js'
-import { createClient } from '@/lib/supabase/client'
-import { Profile } from '@/lib/supabase/types'
+import { signIn as mongoSignIn, signUp as mongoSignUp, getUserProfile, generateToken, verifyToken } from '@/lib/db/auth'
+
+export interface AuthUser {
+  userId: string
+  email: string
+  role: 'student' | 'faculty' | 'hod' | 'principal' | 'admin'
+}
+
+export interface UserProfile {
+  _id: string
+  userId: string
+  email: string
+  fullName: string
+  role: 'student' | 'faculty' | 'hod' | 'principal' | 'admin'
+  department: string | null
+  departmentName?: string | null
+  phone: string | null
+  avatarUrl: string | null
+  createdAt: string
+  updatedAt: string
+}
 
 interface AuthContextType {
-  user: User | null
-  profile: Profile | null
-  session: Session | null
+  user: AuthUser | null
+  profile: UserProfile | null
   loading: boolean
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>
   signUp: (email: string, password: string, fullName: string, role: string, department?: string) => Promise<{ error: Error | null }>
@@ -19,106 +36,112 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [session, setSession] = useState<Session | null>(null)
+  const [user, setUser] = useState<AuthUser | null>(null)
+  const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
-  const supabase = createClient()
 
   const fetchProfile = async (userId: string) => {
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single()
-
-    
-    if (data) {
-      setProfile(data as Profile)
+    try {
+      const response = await fetch(`/api/auth/profile/${userId}`)
+      if (response.ok) {
+        const data = await response.json()
+        setProfile(data)
+      }
+    } catch (error) {
+      console.error('Failed to fetch profile:', error)
     }
   }
 
   const refreshProfile = async () => {
     if (user) {
-      await fetchProfile(user.id)
+      await fetchProfile(user.userId)
     }
   }
 
   useEffect(() => {
-    const getSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      setSession(session)
-      setUser(session?.user ?? null)
-      
-      if (session?.user) {
-        await fetchProfile(session.user.id)
-      }
-      
-      setLoading(false)
-    }
-
-    getSession()
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event: any, session: any) => {
-        setSession(session)
-        setUser(session?.user ?? null)
-        
-        if (session?.user) {
-          await fetchProfile(session.user.id)
-        } else {
-          setProfile(null)
+    const initAuth = async () => {
+      try {
+        const token = localStorage.getItem('authToken')
+        if (token) {
+          // Verify token on client side (basic verification)
+          const response = await fetch('/api/auth/verify', {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          })
+          
+          if (response.ok) {
+            const userData = await response.json()
+            setUser(userData)
+            await fetchProfile(userData.userId)
+          } else {
+            localStorage.removeItem('authToken')
+          }
         }
-        
+      } catch (error) {
+        console.error('Auth initialization error:', error)
+      } finally {
         setLoading(false)
       }
-    )
+    }
 
-    return () => subscription.unsubscribe()
+    initAuth()
   }, [])
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-    return { error }
+    try {
+      const response = await fetch('/api/auth/signin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        return { error: new Error(data.error || 'Sign in failed') }
+      }
+
+      localStorage.setItem('authToken', data.token)
+      setUser(data.user)
+      await fetchProfile(data.user.userId)
+      return { error: null }
+    } catch (error) {
+      return { error: error as Error }
+    }
   }
 
   const signUp = async (email: string, password: string, fullName: string, role: string, department?: string) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-    })
+    try {
+      const response = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, fullName, role, department }),
+      })
 
-    if (error) return { error }
+      const data = await response.json()
 
-    if (data.user) {
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .insert({
-          id: data.user.id,
-          email,
-          full_name: fullName,
-          role: role as 'student' | 'faculty' | 'admin',
-          department: department || null,
-        })
-
-      if (profileError) {
-        return { error: new Error(profileError.message) }
+      if (!response.ok) {
+        return { error: new Error(data.error || 'Sign up failed') }
       }
-    }
 
-    return { error: null }
+      localStorage.setItem('authToken', data.token)
+      setUser(data.user)
+      await fetchProfile(data.user.userId)
+      return { error: null }
+    } catch (error) {
+      return { error: error as Error }
+    }
   }
 
   const signOut = async () => {
-    await supabase.auth.signOut()
+    localStorage.removeItem('authToken')
+    setUser(null)
     setProfile(null)
   }
 
   return (
-    <AuthContext.Provider value={{ user, profile, session, loading, signIn, signUp, signOut, refreshProfile }}>
+    <AuthContext.Provider value={{ user, profile, loading, signIn, signUp, signOut, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   )

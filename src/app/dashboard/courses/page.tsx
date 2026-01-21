@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/components/providers/auth-provider'
-import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,45 +13,93 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { BookOpen, Plus, Users, Trash2, Edit } from 'lucide-react'
-import type { Course, Department, Profile } from '@/lib/supabase/types'
+
+interface Course {
+  _id: string
+  code: string
+  name: string
+  description?: string
+  departmentId: string
+  facultyId: string
+  semester?: number
+  credits: number
+  createdAt: string
+}
+
+interface Department {
+  _id: string
+  name: string
+  description?: string
+}
+
+interface Profile {
+  _id: string
+  fullName: string
+  email: string
+  role: string
+}
+
+interface Student extends Profile {
+  fullName: string
+  email: string
+}
 
 export default function CoursesPage() {
-  const { profile } = useAuth()
+  const { profile, user } = useAuth()
   const [courses, setCourses] = useState<Course[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [faculty, setFaculty] = useState<Profile[]>([])
+  const [students, setStudents] = useState<Student[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [enrollmentDialogOpen, setEnrollmentDialogOpen] = useState(false)
+  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null)
+  const [searchStudentQuery, setSearchStudentQuery] = useState('')
+  const [selectedStudentId, setSelectedStudentId] = useState('')
   const [editingCourse, setEditingCourse] = useState<Course | null>(null)
   const [formData, setFormData] = useState({
     code: '',
     name: '',
     description: '',
-    department_id: '',
-    faculty_id: '',
+    departmentId: '',
+    facultyId: '',
     semester: '',
     credits: '3'
   })
-  const supabase = createClient()
 
   const fetchCourses = async () => {
-    let query = supabase.from('courses').select('*, faculty:profiles(*), department:departments(*)')
-    
-    if (profile?.role === 'student') {
-      const { data: enrollments } = await supabase
-        .from('student_courses')
-        .select('course:courses(*, faculty:profiles(*), department:departments(*))')
-        .eq('student_id', profile.id)
+    try {
+      let url = '/api/courses'
       
-      if (enrollments) {
-        setCourses(enrollments.map(e => e.course as unknown as Course).filter(Boolean))
+      // Use profile.userId instead of user.id for consistency
+      if (profile?.role === 'student' && profile.userId) {
+        const res = await fetch(`/api/users/${profile.userId}/courses`, {
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache' }
+        })
+        const studentCourses = await res.json()
+        setCourses(studentCourses || [])
+      } else if (profile?.role === 'faculty' && profile._id) {
+        url += `?facultyId=${profile._id}`
+        const res = await fetch(url, {
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache' }
+        })
+        const data = await res.json()
+        setCourses(data || [])
+      } else if (profile?.role === 'hod' && profile.department) {
+        // HOD sees courses from their department
+        url += `?departmentId=${profile.department}`
+        const res = await fetch(url)
+        const data = await res.json()
+        setCourses(data || [])
+      } else {
+        const res = await fetch(url)
+        const data = await res.json()
+        setCourses(data || [])
       }
-    } else if (profile?.role === 'faculty') {
-      const { data } = await query.eq('faculty_id', profile.id).order('name')
-      if (data) setCourses(data as Course[])
-    } else {
-      const { data } = await query.order('name')
-      if (data) setCourses(data as Course[])
+    } catch (error: any) {
+      toast.error('Failed to load courses')
     }
     setLoading(false)
   }
@@ -61,15 +108,30 @@ export default function CoursesPage() {
     const fetchData = async () => {
       await fetchCourses()
       
-      const { data: deptData } = await supabase.from('departments').select('*').order('name')
-      if (deptData) setDepartments(deptData)
-      
-      const { data: facultyData } = await supabase.from('profiles').select('*').eq('role', 'faculty').order('full_name')
-      if (facultyData) setFaculty(facultyData)
+      try {
+        const token = localStorage.getItem('authToken')
+        const headers = token ? { Authorization: `Bearer ${token}` } : {}
+        
+        const deptRes = await fetch('/api/departments')
+        const deptData = await deptRes.json()
+        setDepartments(deptData || [])
+        
+        const facultyRes = await fetch('/api/profiles?role=faculty', { headers })
+        const facultyData = await facultyRes.json()
+        setFaculty(Array.isArray(facultyData) ? facultyData : [])
+
+        // Fetch all students for faculty to enroll
+        const studentRes = await fetch('/api/profiles?role=student', { headers })
+        const studentData = await studentRes.json()
+        setStudents(Array.isArray(studentData) ? studentData : [])
+      } catch (error: any) {
+        console.error('Failed to load data', error)
+        toast.error('Failed to load course data')
+      }
     }
     
     if (profile) fetchData()
-  }, [profile])
+  }, [profile, user])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -77,52 +139,60 @@ export default function CoursesPage() {
     const courseData = {
       code: formData.code,
       name: formData.name,
-      description: formData.description || null,
-      department_id: formData.department_id || null,
-      faculty_id: formData.faculty_id || null,
-      semester: formData.semester ? parseInt(formData.semester) : null,
+      description: formData.description || '',
+      departmentId: formData.departmentId,
+      facultyId: formData.facultyId,
+      semester: formData.semester ? parseInt(formData.semester) : undefined,
       credits: parseInt(formData.credits)
     }
 
-    if (editingCourse) {
-      const { error } = await supabase
-        .from('courses')
-        .update(courseData)
-        .eq('id', editingCourse.id)
+    try {
+      let method = 'POST'
+      let url = '/api/courses'
       
-      if (error) {
-        toast.error(error.message)
-        return
+      if (editingCourse) {
+        method = 'PUT'
+        url = `/api/courses/${editingCourse._id}`
       }
-      toast.success('Course updated successfully')
-    } else {
-      const { error } = await supabase.from('courses').insert(courseData)
-      
-      if (error) {
-        toast.error(error.message)
-        return
-      }
-      toast.success('Course created successfully')
-    }
 
-    setDialogOpen(false)
-    setEditingCourse(null)
-    setFormData({ code: '', name: '', description: '', department_id: '', faculty_id: '', semester: '', credits: '3' })
-    fetchCourses()
+      const token = localStorage.getItem('authToken')
+      const headers: any = { 'Content-Type': 'application/json' }
+      if (token) {
+        headers.Authorization = `Bearer ${token}`
+      }
+
+      const res = await fetch(url, {
+        method,
+        headers,
+        body: JSON.stringify(courseData)
+      })
+
+      if (!res.ok) {
+        const error = await res.json()
+        throw new Error(error.error || 'Failed to save course')
+      }
+
+      toast.success(editingCourse ? 'Course updated' : 'Course created')
+      setDialogOpen(false)
+      setEditingCourse(null)
+      setFormData({ code: '', name: '', description: '', departmentId: '', facultyId: '', semester: '', credits: '3' })
+      await fetchCourses()
+    } catch (error: any) {
+      toast.error(error.message)
+    }
   }
 
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this course?')) return
     
-    const { error } = await supabase.from('courses').delete().eq('id', id)
-    
-    if (error) {
+    try {
+      const res = await fetch(`/api/courses/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Failed to delete')
+      toast.success('Course deleted')
+      await fetchCourses()
+    } catch (error: any) {
       toast.error(error.message)
-      return
     }
-    
-    toast.success('Course deleted successfully')
-    fetchCourses()
   }
 
   const openEditDialog = (course: Course) => {
@@ -131,15 +201,52 @@ export default function CoursesPage() {
       code: course.code,
       name: course.name,
       description: course.description || '',
-      department_id: course.department_id || '',
-      faculty_id: course.faculty_id || '',
+      departmentId: course.departmentId,
+      facultyId: course.facultyId,
       semester: course.semester?.toString() || '',
       credits: course.credits.toString()
     })
     setDialogOpen(true)
   }
 
-  const canManage = profile?.role === 'admin' || profile?.role === 'faculty'
+  const handleEnrollStudent = async (studentId: string) => {
+    if (!selectedCourse) return
+
+    try {
+      const res = await fetch('/api/enrollments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          studentId,
+          courseId: selectedCourse._id,
+          facultyId: profile._id
+        })
+      })
+
+      if (!res.ok) {
+        const error = await res.json()
+        throw new Error(error.error || 'Failed to enroll student')
+      }
+
+      toast.success('Student enrolled successfully')
+      setSelectedStudentId('')
+      setSearchStudentQuery('')
+    } catch (error: any) {
+      toast.error(error.message)
+    }
+  }
+
+  const openEnrollmentDialog = (course: Course) => {
+    setSelectedCourse(course)
+    setEnrollmentDialogOpen(true)
+  }
+
+  const filteredStudents = students.filter(s =>
+    s.fullName.toLowerCase().includes(searchStudentQuery.toLowerCase()) ||
+    s.email.toLowerCase().includes(searchStudentQuery.toLowerCase())
+  )
+
+  const canManage = profile?.role === 'admin' || profile?.role === 'faculty' || profile?.role === 'hod'
 
   if (!profile) return null
 
@@ -148,18 +255,21 @@ export default function CoursesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
-            {profile.role === 'student' ? 'My Courses' : profile.role === 'faculty' ? 'Teaching Courses' : 'All Courses'}
+            {profile.role === 'student' ? 'My Courses' : profile.role === 'faculty' ? 'Teaching Courses' : profile.role === 'hod' ? 'Department Courses' : 'All Courses'}
           </h1>
           <p className="text-muted-foreground">
-            {profile.role === 'student' ? 'Courses you are enrolled in' : profile.role === 'faculty' ? 'Courses assigned to you' : 'Manage all courses'}
+            {profile.role === 'student' ? 'Courses you are enrolled in' : profile.role === 'faculty' ? 'Courses assigned to you' : profile.role === 'hod' ? 'Manage courses in your department' : 'Manage all courses'}
           </p>
         </div>
-        {profile.role === 'admin' && (
+        {(profile.role === 'admin' || profile.role === 'hod') && (
           <Dialog open={dialogOpen} onOpenChange={(open) => {
             setDialogOpen(open)
             if (!open) {
               setEditingCourse(null)
-              setFormData({ code: '', name: '', description: '', department_id: '', faculty_id: '', semester: '', credits: '3' })
+              setFormData({ code: '', name: '', description: '', departmentId: '', facultyId: '', semester: '', credits: '3' })
+            } else if (profile.role === 'hod' && !editingCourse) {
+              // Pre-fill department for HOD when creating new course
+              setFormData(prev => ({ ...prev, departmentId: profile.department || '' }))
             }
           }}>
             <DialogTrigger asChild>
@@ -170,8 +280,18 @@ export default function CoursesPage() {
             </DialogTrigger>
             <DialogContent className="max-w-md">
               <DialogHeader>
-                <DialogTitle>{editingCourse ? 'Edit Course' : 'Add New Course'}</DialogTitle>
-                <DialogDescription>Fill in the course details below</DialogDescription>
+                <DialogTitle>
+                  {editingCourse 
+                    ? (profile.role === 'hod' ? 'Manage Course & Faculty Assignment' : 'Edit Course')
+                    : 'Add New Course'
+                  }
+                </DialogTitle>
+                <DialogDescription>
+                  {profile.role === 'hod' 
+                    ? 'Assign or reassign faculty to this course'
+                    : 'Fill in the course details below'
+                  }
+                </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
@@ -218,13 +338,17 @@ export default function CoursesPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Department</Label>
-                    <Select value={formData.department_id} onValueChange={(v) => setFormData({ ...formData, department_id: v })}>
+                    <Select 
+                      value={formData.departmentId} 
+                      onValueChange={(v) => setFormData({ ...formData, departmentId: v })}
+                      disabled={profile.role === 'hod'}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="Select" />
                       </SelectTrigger>
                       <SelectContent>
                         {departments.map((dept) => (
-                          <SelectItem key={dept.id} value={dept.id}>{dept.name}</SelectItem>
+                          <SelectItem key={dept._id} value={dept._id}>{dept.name}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -244,20 +368,31 @@ export default function CoursesPage() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>Faculty</Label>
-                  <Select value={formData.faculty_id} onValueChange={(v) => setFormData({ ...formData, faculty_id: v })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Assign faculty" />
+                  <Label className="flex items-center gap-2">
+                    Faculty Assignment
+                    {profile.role === 'hod' && <Badge variant="secondary" className="text-xs">Required</Badge>}
+                  </Label>
+                  <Select 
+                    value={formData.facultyId} 
+                    onValueChange={(v) => setFormData({ ...formData, facultyId: v })}
+                  >
+                    <SelectTrigger className={formData.facultyId ? 'border-green-500' : ''}>
+                      <SelectValue placeholder="Select faculty member" />
                     </SelectTrigger>
                     <SelectContent>
                       {faculty.map((f) => (
-                        <SelectItem key={f.id} value={f.id}>{f.full_name}</SelectItem>
+                        <SelectItem key={f._id} value={f._id}>
+                          {f.fullName} - {f.email}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {profile.role === 'hod' ? 'Assign this course to a faculty member in your department' : 'Select the instructor for this course'}
+                  </p>
                 </div>
                 <Button type="submit" className="w-full">
-                  {editingCourse ? 'Update Course' : 'Create Course'}
+                  {editingCourse ? (profile.role === 'hod' ? 'Update Assignment' : 'Update Course') : 'Create Course'}
                 </Button>
               </form>
             </DialogContent>
@@ -286,7 +421,7 @@ export default function CoursesPage() {
       ) : (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           {courses.map((course) => (
-            <Card key={course.id} className="hover:shadow-lg transition-shadow">
+            <Card key={course._id} className="hover:shadow-lg transition-shadow">
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between">
                   <div>
@@ -294,7 +429,7 @@ export default function CoursesPage() {
                     <CardDescription>{course.code}</CardDescription>
                   </div>
                   <Badge variant="secondary">
-                    {course.credits} Credits
+                    {course.credits} Cr
                   </Badge>
                 </div>
               </CardHeader>
@@ -302,29 +437,87 @@ export default function CoursesPage() {
                 {course.description && (
                   <p className="text-sm text-muted-foreground line-clamp-2">{course.description}</p>
                 )}
-                <div className="flex items-center gap-2 text-sm">
-                  <Users className="h-4 w-4 text-muted-foreground" />
-                  <span>{(course.faculty as Profile)?.full_name || 'No instructor'}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <Badge variant="outline">
-                    {(course.department as Department)?.name || 'No department'}
-                  </Badge>
-                  {course.semester && (
-                    <span className="text-xs text-muted-foreground">Semester {course.semester}</span>
+                <div className="text-xs text-muted-foreground space-y-1">
+                  <p>Dept: {course.departmentId.substring(0, 8)}...</p>
+                  {course.semester && <p>Semester {course.semester}</p>}
+                  {course.facultyId && (
+                    <p className="font-medium text-blue-600">
+                      Assigned to: {faculty.find(f => f._id === course.facultyId)?.fullName || 'Unknown'}
+                    </p>
+                  )}
+                  {!course.facultyId && (
+                    <p className="font-medium text-orange-600">Not assigned</p>
                   )}
                 </div>
-                {profile.role === 'admin' && (
+                {/* Admin and HOD can edit/delete courses */}
+                {(profile.role === 'admin' || profile.role === 'hod') && (
                   <div className="flex gap-2 pt-2">
-                    <Button size="sm" variant="outline" onClick={() => openEditDialog(course)}>
+                    <Button size="sm" variant="outline" onClick={() => openEditDialog(course)} className="flex-1">
                       <Edit className="h-4 w-4 mr-1" />
-                      Edit
+                      {profile.role === 'hod' ? 'Assign Faculty' : 'Edit'}
                     </Button>
-                    <Button size="sm" variant="destructive" onClick={() => handleDelete(course.id)}>
-                      <Trash2 className="h-4 w-4 mr-1" />
-                      Delete
-                    </Button>
+                    {profile.role === 'admin' && (
+                      <Button size="sm" variant="destructive" onClick={() => handleDelete(course._id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
+                )}
+                {profile.role === 'faculty' && course.facultyId === profile._id && (
+                  <Dialog open={enrollmentDialogOpen && selectedCourse?._id === course._id} onOpenChange={(open) => {
+                    setEnrollmentDialogOpen(open)
+                    if (!open) {
+                      setSelectedCourse(null)
+                      setSearchStudentQuery('')
+                      setSelectedStudentId('')
+                    }
+                  }}>
+                    <DialogTrigger asChild>
+                      <Button size="sm" variant="default" onClick={() => openEnrollmentDialog(course)}>
+                        <Users className="h-4 w-4 mr-1" />
+                        Manage Students
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-md">
+                      <DialogHeader>
+                        <DialogTitle>Enroll Students - {course.name}</DialogTitle>
+                        <DialogDescription>Search and add students to this course</DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="search">Search Student</Label>
+                          <Input
+                            id="search"
+                            placeholder="Search by name or email..."
+                            value={searchStudentQuery}
+                            onChange={(e) => setSearchStudentQuery(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Select Student</Label>
+                          <Select value={selectedStudentId} onValueChange={setSelectedStudentId}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Choose a student" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {filteredStudents.map((student) => (
+                                <SelectItem key={student._id} value={student._id}>
+                                  {student.fullName} ({student.email})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <Button 
+                          onClick={() => selectedStudentId && handleEnrollStudent(selectedStudentId)}
+                          disabled={!selectedStudentId}
+                          className="w-full"
+                        >
+                          Enroll Student
+                        </Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
                 )}
               </CardContent>
             </Card>
@@ -334,3 +527,4 @@ export default function CoursesPage() {
     </div>
   )
 }
+

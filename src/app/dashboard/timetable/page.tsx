@@ -2,11 +2,27 @@
 
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/components/providers/auth-provider'
-import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Calendar, Clock, MapPin } from 'lucide-react'
-import type { Timetable, Course } from '@/lib/supabase/types'
+
+interface Course {
+  _id: string
+  name: string
+  code: string
+  facultyId: string
+}
+
+interface Timetable {
+  _id: string
+  courseId: string
+  course?: Course
+  dayOfWeek: number
+  startTime: string
+  endTime: string
+  room?: string
+  createdAt: string
+}
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
@@ -14,30 +30,36 @@ export default function TimetablePage() {
   const { profile } = useAuth()
   const [timetable, setTimetable] = useState<Timetable[]>([])
   const [loading, setLoading] = useState(true)
-  const supabase = createClient()
 
   useEffect(() => {
     const fetchTimetable = async () => {
-      if (profile?.role === 'student') {
-        const { data: enrollments } = await supabase
-          .from('student_courses')
-          .select('course_id')
-          .eq('student_id', profile.id)
-        
-        const courseIds = enrollments?.map(e => e.course_id) || []
-        
-        if (courseIds.length > 0) {
-          const { data } = await supabase
-            .from('timetable')
-            .select('*, course:courses(*)')
-            .in('course_id', courseIds)
-            .order('day_of_week')
-            .order('start_time')
-          
-          if (data) setTimetable(data as Timetable[])
+      try {
+        if (profile?.role === 'student') {
+          // Get student's enrolled courses
+          const coursesRes = await fetch(`/api/users/${profile.id}/courses`)
+          if (!coursesRes.ok) throw new Error('Failed to fetch student courses')
+          const courseData = await coursesRes.json()
+          const courseIds = courseData.map((c: any) => c._id)
+
+          if (courseIds.length > 0) {
+            // Get timetables for these courses
+            const timetableRes = await fetch(`/api/timetables?courseIds=${courseIds.join(',')}`)
+            if (!timetableRes.ok) throw new Error('Failed to fetch timetable')
+            const data = await timetableRes.json()
+            const sorted = data.sort((a: Timetable, b: Timetable) => {
+              if (a.dayOfWeek !== b.dayOfWeek) {
+                return a.dayOfWeek - b.dayOfWeek
+              }
+              return a.startTime.localeCompare(b.startTime)
+            })
+            setTimetable(sorted)
+          }
         }
+      } catch (error) {
+        console.error('Error fetching timetable:', error)
+      } finally {
+        setLoading(false)
       }
-      setLoading(false)
     }
     
     if (profile) fetchTimetable()
@@ -46,10 +68,10 @@ export default function TimetablePage() {
   const groupByDay = () => {
     const grouped: Record<number, Timetable[]> = {}
     timetable.forEach((item) => {
-      if (!grouped[item.day_of_week]) {
-        grouped[item.day_of_week] = []
+      if (!grouped[item.dayOfWeek]) {
+        grouped[item.dayOfWeek] = []
       }
-      grouped[item.day_of_week].push(item)
+      grouped[item.dayOfWeek].push(item)
     })
     return grouped
   }
@@ -119,22 +141,22 @@ export default function TimetablePage() {
                   <div className="space-y-3">
                     {dayClasses.map((item) => (
                       <div 
-                        key={item.id} 
+                        key={item._id} 
                         className="flex items-center justify-between p-4 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors"
                       >
                         <div className="flex items-center gap-4">
                           <div className="h-12 w-12 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-500 flex items-center justify-center text-white font-bold">
-                            {(item.course as Course)?.code?.substring(0, 2) || 'CS'}
+                            {item.course?.code?.substring(0, 2) || 'CS'}
                           </div>
                           <div>
-                            <p className="font-semibold">{(item.course as Course)?.name}</p>
-                            <p className="text-sm text-muted-foreground">{(item.course as Course)?.code}</p>
+                            <p className="font-semibold">{item.course?.name}</p>
+                            <p className="text-sm text-muted-foreground">{item.course?.code}</p>
                           </div>
                         </div>
                         <div className="text-right">
                           <div className="flex items-center gap-1 text-sm font-medium">
                             <Clock className="h-4 w-4 text-muted-foreground" />
-                            {formatTime(item.start_time)} - {formatTime(item.end_time)}
+                            {formatTime(item.startTime)} - {formatTime(item.endTime)}
                           </div>
                           {item.room && (
                             <div className="flex items-center gap-1 text-sm text-muted-foreground mt-1">
@@ -155,3 +177,4 @@ export default function TimetablePage() {
     </div>
   )
 }
+

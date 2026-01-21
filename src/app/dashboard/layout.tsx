@@ -48,6 +48,12 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     { href: '/dashboard/assignments', label: 'Assignments', icon: ClipboardList },
     { href: '/dashboard/timetable', label: 'Timetable', icon: Calendar },
     { href: '/dashboard/attendance', label: 'Attendance', icon: BarChart3 },
+    { type: 'separator', label: 'Services' },
+    { href: '/dashboard/bonafide', label: 'Bonafide Certificate', icon: FileText },
+    { href: '/dashboard/leaving-certificate', label: 'Leaving Certificate', icon: FileText },
+    { href: '/dashboard/fee-payments', label: 'Fee Payments', icon: FileText },
+    { href: '/dashboard/scholarships', label: 'Scholarships', icon: GraduationCap },
+    { type: 'separator', label: 'Communication' },
     { href: '/dashboard/notices', label: 'Notices', icon: Bell },
     { href: '/dashboard/messages', label: 'Messages', icon: MessageSquare },
   ]
@@ -58,6 +64,12 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     { href: '/dashboard/materials', label: 'Study Materials', icon: FileText },
     { href: '/dashboard/assignments', label: 'Assignments', icon: ClipboardList },
     { href: '/dashboard/attendance', label: 'Mark Attendance', icon: BarChart3 },
+    { type: 'separator', label: 'Services' },
+    { href: '/dashboard/faculty/bonafide-requests', label: 'Bonafide Requests', icon: FileText },
+    { href: '/dashboard/faculty/leaving-certificate-requests', label: 'LC Requests', icon: FileText },
+    { href: '/dashboard/faculty/fee-payments', label: 'Fee Verification', icon: FileText },
+    { href: '/dashboard/faculty/scholarships', label: 'Scholarships', icon: GraduationCap },
+    { type: 'separator', label: 'Communication' },
     { href: '/dashboard/notices', label: 'Notices', icon: Bell },
     { href: '/dashboard/messages', label: 'Messages', icon: MessageSquare },
   ]
@@ -71,7 +83,43 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     { href: '/dashboard/messages', label: 'Messages', icon: MessageSquare },
   ]
 
-  const links = profile.role === 'admin' ? adminLinks : profile.role === 'faculty' ? facultyLinks : studentLinks
+  const hodLinks = [
+    { href: '/dashboard', label: 'Dashboard', icon: Home },
+    { href: '/dashboard/users', label: 'Manage Faculty', icon: Users },
+    { href: '/dashboard/courses', label: 'Department Courses', icon: BookOpen },
+    { href: '/dashboard/attendance', label: 'Attendance', icon: BarChart3 },
+    { type: 'separator', label: 'Services' },
+    { href: '/dashboard/faculty/bonafide-requests', label: 'Bonafide Requests', icon: FileText },
+    { href: '/dashboard/faculty/leaving-certificate-requests', label: 'LC Requests', icon: FileText },
+    { href: '/dashboard/faculty/scholarships', label: 'Scholarships', icon: GraduationCap },
+    { type: 'separator', label: 'Communication' },
+    { href: '/dashboard/notices', label: 'Notices', icon: Bell },
+    { href: '/dashboard/messages', label: 'Messages', icon: MessageSquare },
+  ]
+
+  const principalLinks = [
+    { href: '/dashboard', label: 'Dashboard', icon: Home },
+    { href: '/dashboard/departments', label: 'Departments', icon: Building2 },
+    { href: '/dashboard/faculty', label: 'Faculty', icon: Users },
+    { href: '/dashboard/users', label: 'Students', icon: Users },
+    { href: '/dashboard/courses', label: 'Courses', icon: BookOpen },
+    { href: '/dashboard/notices', label: 'Notices', icon: Bell },
+    { href: '/dashboard/messages', label: 'Messages', icon: MessageSquare },
+    { href: '/dashboard/fee-payments', label: 'Fee Payments', icon: FileText },
+  ]
+
+  let links
+  if (profile.role === 'admin') {
+    links = adminLinks
+  } else if (profile.role === 'principal') {
+    links = principalLinks
+  } else if (profile.role === 'hod') {
+    links = hodLinks
+  } else if (profile.role === 'faculty') {
+    links = facultyLinks
+  } else {
+    links = studentLinks
+  }
 
   const handleSignOut = async () => {
     await signOut()
@@ -92,34 +140,50 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
               </div>
               <span className="text-lg font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">EduHub</span>
             </Link>
-            <button onClick={() => setSidebarOpen(false)} className="lg:hidden text-slate-500 hover:text-slate-700">
+            <button 
+              onClick={() => setSidebarOpen(false)} 
+              className="lg:hidden text-slate-500 hover:text-slate-700"
+              aria-label="Close sidebar"
+              title="Close sidebar"
+            >
               <X className="h-5 w-5" />
             </button>
           </div>
           
           <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
-            {links.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                onClick={() => setSidebarOpen(false)}
-              >
-                <link.icon className="h-5 w-5" />
-                <span className="font-medium">{link.label}</span>
-              </Link>
-            ))}
+            {links.map((link, index) => {
+              if (link.type === 'separator') {
+                return (
+                  <div key={`separator-${index}`} className="pt-4 pb-2">
+                    <p className="px-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                      {link.label}
+                    </p>
+                  </div>
+                )
+              }
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-600 hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                  onClick={() => setSidebarOpen(false)}
+                >
+                  <link.icon className="h-5 w-5" />
+                  <span className="font-medium">{link.label}</span>
+                </Link>
+              )
+            })}
           </nav>
 
           <div className="p-4 border-t">
             <div className="flex items-center gap-3 px-3 py-2">
               <Avatar className="h-9 w-9">
                 <AvatarFallback className="bg-blue-100 text-blue-600 font-medium">
-                  {profile.full_name.charAt(0).toUpperCase()}
+                  {profile.fullName?.charAt(0).toUpperCase() || 'U'}
                 </AvatarFallback>
               </Avatar>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-900 truncate">{profile.full_name}</p>
+                <p className="text-sm font-medium text-slate-900 truncate">{profile.fullName}</p>
                 <p className="text-xs text-slate-500 capitalize">{profile.role}</p>
               </div>
             </div>
@@ -136,7 +200,12 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
       <div className="lg:pl-64">
         <header className="sticky top-0 z-30 h-16 bg-white border-b flex items-center justify-between px-4 lg:px-8">
-          <button onClick={() => setSidebarOpen(true)} className="lg:hidden text-slate-500 hover:text-slate-700">
+          <button 
+            onClick={() => setSidebarOpen(true)} 
+            className="lg:hidden text-slate-500 hover:text-slate-700"
+            aria-label="Open sidebar"
+            title="Open sidebar"
+          >
             <Menu className="h-6 w-6" />
           </button>
 
@@ -154,15 +223,15 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 <Button variant="ghost" className="flex items-center gap-2">
                   <Avatar className="h-8 w-8">
                     <AvatarFallback className="bg-blue-100 text-blue-600 font-medium text-sm">
-                      {profile.full_name.charAt(0).toUpperCase()}
+                      {profile.fullName?.charAt(0).toUpperCase() || 'U'}
                     </AvatarFallback>
                   </Avatar>
-                  <span className="hidden sm:inline text-sm font-medium">{profile.full_name}</span>
+                  <span className="hidden sm:inline text-sm font-medium">{profile.fullName}</span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
                 <div className="px-2 py-1.5">
-                  <p className="text-sm font-medium">{profile.full_name}</p>
+                  <p className="text-sm font-medium">{profile.fullName}</p>
                   <p className="text-xs text-muted-foreground">{profile.email}</p>
                 </div>
                 <DropdownMenuSeparator />

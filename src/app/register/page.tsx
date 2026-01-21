@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/providers/auth-provider'
-import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -12,7 +11,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { toast } from 'sonner'
 import { GraduationCap, ArrowLeft, Eye, EyeOff, User, Building2, BookOpen } from 'lucide-react'
-import type { Department } from '@/lib/supabase/types'
+
+interface Department {
+  _id: string
+  name: string
+  description: string | null
+  createdAt: string
+}
 
 export default function RegisterPage() {
   const [fullName, setFullName] = useState('')
@@ -27,27 +32,28 @@ export default function RegisterPage() {
   const [deptLoading, setDeptLoading] = useState(true)
   const { signUp } = useAuth()
   const router = useRouter()
-  const supabase = createClient()
 
   // Default departments if none exist in database
   const defaultDepartments: Department[] = [
-    { id: '1', name: 'Computer Science', description: 'Computer Science Department', created_at: new Date().toISOString() },
-    { id: '2', name: 'Engineering', description: 'Engineering Department', created_at: new Date().toISOString() },
-    { id: '3', name: 'Business', description: 'Business Department', created_at: new Date().toISOString() },
-    { id: '4', name: 'Science', description: 'Science Department', created_at: new Date().toISOString() },
-    { id: '5', name: 'Arts', description: 'Arts Department', created_at: new Date().toISOString() },
+    { _id: '1', name: 'Computer Science', description: 'Computer Science Department', createdAt: new Date().toISOString() },
+    { _id: '2', name: 'Engineering', description: 'Engineering Department', createdAt: new Date().toISOString() },
+    { _id: '3', name: 'Business', description: 'Business Department', createdAt: new Date().toISOString() },
+    { _id: '4', name: 'Science', description: 'Science Department', createdAt: new Date().toISOString() },
+    { _id: '5', name: 'Arts', description: 'Arts Department', createdAt: new Date().toISOString() },
   ]
 
   useEffect(() => {
     const fetchDepartments = async () => {
       try {
         setDeptLoading(true)
-        const { data, error } = await supabase.from('departments').select('*').order('name')
-        if (error) {
-          console.error('Error fetching departments:', error)
-          setDepartments(defaultDepartments)
-        } else if (data && data.length > 0) {
-          setDepartments(data)
+        const response = await fetch('/api/departments')
+        if (response.ok) {
+          const data = await response.json()
+          if (data && data.length > 0) {
+            setDepartments(data)
+          } else {
+            setDepartments(defaultDepartments)
+          }
         } else {
           setDepartments(defaultDepartments)
         }
@@ -141,22 +147,24 @@ export default function RegisterPage() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="role">Role</Label>
-                <Select value={role} onValueChange={setRole}>
-                  <SelectTrigger className="h-11">
-                    <BookOpen className="h-4 w-4 mr-2 text-muted-foreground" />
-                    <SelectValue placeholder="Select role" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="student">Student</SelectItem>
-                    <SelectItem value="faculty">Faculty</SelectItem>
-                    <SelectItem value="admin">Admin</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
+            <div className="space-y-2">
+              <Label htmlFor="role">Role</Label>
+              <Select value={role} onValueChange={setRole}>
+                <SelectTrigger className="h-11">
+                  <BookOpen className="h-4 w-4 mr-2 text-muted-foreground" />
+                  <SelectValue placeholder="Select role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="student">Student</SelectItem>
+                  <SelectItem value="faculty">Faculty</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                HOD, Principal, and Admin accounts are created by administrators only
+              </p>
+            </div>
+
+            {role !== 'admin' && (
               <div className="space-y-2">
                 <Label htmlFor="department">Department</Label>
                 <Select value={department} onValueChange={setDepartment} disabled={deptLoading}>
@@ -166,14 +174,14 @@ export default function RegisterPage() {
                   </SelectTrigger>
                   <SelectContent>
                     {departments && departments.length > 0 && departments.map((dept) => (
-                      <SelectItem key={dept.id} value={dept.name}>
+                      <SelectItem key={dept._id} value={dept.name}>
                         {dept.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-            </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>

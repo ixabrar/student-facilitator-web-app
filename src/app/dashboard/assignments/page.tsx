@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/components/providers/auth-provider'
-import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,7 +13,36 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { ClipboardList, Plus, Trash2, Edit, Upload, Download, FileText, Clock, CheckCircle } from 'lucide-react'
-import type { Assignment, Course, AssignmentSubmission } from '@/lib/supabase/types'
+import { ensureArray } from '@/lib/fetchUtils'
+
+interface Course {
+  _id: string
+  name: string
+  code: string
+  facultyId: string
+}
+
+interface Assignment {
+  _id: string
+  title: string
+  description?: string
+  courseId: string
+  course?: Course
+  facultyId: string
+  dueDate: string
+  maxScore: number
+  createdAt: string
+  updatedAt: string
+}
+
+interface AssignmentSubmission {
+  _id: string
+  assignmentId: string
+  studentId: string
+  fileUrl: string
+  fileName: string
+  submittedAt: string
+}
 
 export default function AssignmentsPage() {
   const { profile } = useAuth()
@@ -30,67 +58,94 @@ export default function AssignmentsPage() {
   const [formData, setFormData] = useState({
     title: '',
     description: '',
-    course_id: '',
-    due_date: '',
-    max_score: '100'
+    courseId: '',
+    dueDate: '',
+    maxScore: '100'
   })
-  const supabase = createClient()
 
   const fetchAssignments = async () => {
-    if (profile?.role === 'student') {
-      const { data: enrollments } = await supabase
-        .from('student_courses')
-        .select('course_id')
-        .eq('student_id', profile.id)
-      
-      const courseIds = enrollments?.map(e => e.course_id) || []
-      
-      if (courseIds.length > 0) {
-        const { data } = await supabase
-          .from('assignments')
-          .select('*, course:courses(*)')
-          .in('course_id', courseIds)
-          .order('due_date', { ascending: true })
-        
-        if (data) setAssignments(data as Assignment[])
+    try {
+      const token = localStorage.getItem('authToken')
+      const headers = token ? { Authorization: `Bearer ${token}` } : {}
 
-        const { data: subs } = await supabase
-          .from('assignment_submissions')
-          .select('*')
-          .eq('student_id', profile.id)
-        
-        if (subs) {
-          const subsMap: Record<string, AssignmentSubmission> = {}
-          subs.forEach((s) => { subsMap[s.assignment_id] = s })
-          setSubmissions(subsMap)
+      if (profile?.role === 'student') {
+        // Get student's enrolled courses
+        const coursesRes = await fetch(`/api/users/${profile.userId}/courses`, { headers })
+        if (!coursesRes.ok) {
+          console.error('Failed to fetch student courses:', await coursesRes.text())
+          throw new Error('Failed to fetch student courses')
         }
+        const courseData = ensureArray(await coursesRes.json())
+        const courseIds = courseData.map((c: any) => c._id)
+
+        if (courseIds.length > 0) {
+          // Get assignments for these courses
+          const assignmentsRes = await fetch(`/api/assignments?courseIds=${courseIds.join(',')}`, { headers })
+          if (!assignmentsRes.ok) {
+            console.error('Failed to fetch assignments:', await assignmentsRes.text())
+            throw new Error('Failed to fetch assignments')
+          }
+          const assignmentData = ensureArray(await assignmentsRes.json())
+          setAssignments(assignmentData.sort((a: Assignment, b: Assignment) => 
+            new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()
+          ))
+
+          // Get student's submissions
+          const submissionsRes = await fetch(`/api/submissions?studentId=${profile._id}`, { headers })
+          if (!submissionsRes.ok) {
+            console.error('Failed to fetch submissions:', await submissionsRes.text())
+            throw new Error('Failed to fetch submissions')
+          }
+          const submissionsData = ensureArray(await submissionsRes.json())
+          const subsMap: Record<string, AssignmentSubmission> = {}
+          submissionsData.forEach((s: AssignmentSubmission) => {
+            subsMap[s.assignmentId] = s
+          })
+          setSubmissions(subsMap)
+        } else {
+          // No enrolled courses
+          setAssignments([])
+        }
+      } else if (profile?.role === 'faculty') {
+        // Get faculty's courses
+        const coursesRes = await fetch(`/api/courses?facultyId=${profile._id}`, { headers })
+        if (!coursesRes.ok) {
+          console.error('Failed to fetch faculty courses:', await coursesRes.text())
+          throw new Error('Failed to fetch faculty courses')
+        }
+        const courseData = ensureArray(await coursesRes.json())
+        const courseIds = courseData.map((c: any) => c._id)
+
+        if (courseIds.length > 0) {
+          // Get assignments for these courses
+          const assignmentsRes = await fetch(`/api/assignments?courseIds=${courseIds.join(',')}`, { headers })
+          if (!assignmentsRes.ok) {
+            console.error('Failed to fetch assignments:', await assignmentsRes.text())
+            throw new Error('Failed to fetch assignments')
+          }
+          const assignmentData = ensureArray(await assignmentsRes.json())
+          setAssignments(assignmentData.sort((a: Assignment, b: Assignment) => 
+            new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()
+          ))
+        } else {
+          // No courses assigned yet, show empty list
+          setAssignments([])
+        }
+      } else {
+        // Admin - get all assignments
+        const assignmentsRes = await fetch('/api/assignments', { headers })
+        if (!assignmentsRes.ok) throw new Error('Failed to fetch assignments')
+        const assignmentData = ensureArray(await assignmentsRes.json())
+        setAssignments(assignmentData.sort((a: Assignment, b: Assignment) => 
+          new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()
+        ))
       }
-    } else if (profile?.role === 'faculty') {
-      const { data: coursesData } = await supabase
-        .from('courses')
-        .select('id')
-        .eq('faculty_id', profile.id)
-      
-      const courseIds = coursesData?.map(c => c.id) || []
-      
-      if (courseIds.length > 0) {
-        const { data } = await supabase
-          .from('assignments')
-          .select('*, course:courses(*)')
-          .in('course_id', courseIds)
-          .order('due_date', { ascending: true })
-        
-        if (data) setAssignments(data as Assignment[])
-      }
-    } else {
-      const { data } = await supabase
-        .from('assignments')
-        .select('*, course:courses(*)')
-        .order('due_date', { ascending: true })
-      
-      if (data) setAssignments(data as Assignment[])
+    } catch (error) {
+      console.error('Error fetching assignments:', error)
+      toast.error('Failed to load assignments')
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   useEffect(() => {
@@ -98,12 +153,17 @@ export default function AssignmentsPage() {
       await fetchAssignments()
       
       if (profile?.role === 'faculty') {
-        const { data: coursesData } = await supabase
-          .from('courses')
-          .select('*')
-          .eq('faculty_id', profile.id)
-          .order('name')
-        if (coursesData) setCourses(coursesData)
+        try {
+          const token = localStorage.getItem('authToken')
+          const headers = token ? { Authorization: `Bearer ${token}` } : {}
+          const res = await fetch(`/api/courses?facultyId=${profile._id}`, { headers })
+          if (res.ok) {
+            const data = await res.json()
+            setCourses(data)
+          }
+        } catch (error) {
+          console.error('Error fetching courses:', error)
+        }
       }
     }
     
@@ -116,37 +176,55 @@ export default function AssignmentsPage() {
     const assignmentData = {
       title: formData.title,
       description: formData.description || null,
-      course_id: formData.course_id,
-      faculty_id: profile?.id,
-      due_date: formData.due_date,
-      max_score: parseInt(formData.max_score)
+      courseId: formData.courseId,
+      facultyId: profile?._id,
+      dueDate: formData.dueDate,
+      maxScore: parseInt(formData.maxScore)
     }
 
-    const { error } = await supabase.from('assignments').insert(assignmentData)
-    
-    if (error) {
-      toast.error(error.message)
-      return
+    try {
+      const res = await fetch('/api/assignments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(assignmentData)
+      })
+
+      if (!res.ok) {
+        const error = await res.json()
+        toast.error(error.message || 'Failed to create assignment')
+        return
+      }
+      
+      toast.success('Assignment created successfully')
+      setDialogOpen(false)
+      setFormData({ title: '', description: '', courseId: '', dueDate: '', maxScore: '100' })
+      fetchAssignments()
+    } catch (error) {
+      console.error('Error creating assignment:', error)
+      toast.error('Failed to create assignment')
     }
-    
-    toast.success('Assignment created successfully')
-    setDialogOpen(false)
-    setFormData({ title: '', description: '', course_id: '', due_date: '', max_score: '100' })
-    fetchAssignments()
   }
 
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this assignment?')) return
     
-    const { error } = await supabase.from('assignments').delete().eq('id', id)
-    
-    if (error) {
-      toast.error(error.message)
-      return
+    try {
+      const res = await fetch(`/api/assignments/${id}`, {
+        method: 'DELETE'
+      })
+
+      if (!res.ok) {
+        const error = await res.json()
+        toast.error(error.message || 'Failed to delete assignment')
+        return
+      }
+      
+      toast.success('Assignment deleted successfully')
+      fetchAssignments()
+    } catch (error) {
+      console.error('Error deleting assignment:', error)
+      toast.error('Failed to delete assignment')
     }
-    
-    toast.success('Assignment deleted successfully')
-    fetchAssignments()
   }
 
   const handleFileSubmit = async () => {
@@ -154,42 +232,52 @@ export default function AssignmentsPage() {
     
     setUploading(true)
     
-    const fileExt = uploadFile.name.split('.').pop()
-    const fileName = `${profile.id}/${selectedAssignment.id}/${Date.now()}.${fileExt}`
-    
-    const { error: uploadError } = await supabase.storage
-      .from('uploads')
-      .upload(fileName, uploadFile)
-    
-    if (uploadError) {
-      toast.error(uploadError.message)
+    try {
+      // In a real implementation, upload to cloud storage
+      // For now, we'll create a data URL to simulate file upload
+      const reader = new FileReader()
+      reader.onload = async () => {
+        const fileUrl = reader.result as string
+        
+        const submissionData = {
+          assignmentId: selectedAssignment._id,
+          studentId: profile._id,
+          fileUrl: fileUrl,
+          fileName: uploadFile.name
+        }
+
+        try {
+          const res = await fetch('/api/submissions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(submissionData)
+          })
+
+          if (!res.ok) {
+            const error = await res.json()
+            toast.error(error.message || 'Failed to submit assignment')
+            setUploading(false)
+            return
+          }
+
+          toast.success('Assignment submitted successfully')
+          setSubmitDialogOpen(false)
+          setSelectedAssignment(null)
+          setUploadFile(null)
+          setUploading(false)
+          fetchAssignments()
+        } catch (error) {
+          console.error('Error submitting assignment:', error)
+          toast.error('Failed to submit assignment')
+          setUploading(false)
+        }
+      }
+      reader.readAsDataURL(uploadFile)
+    } catch (error) {
+      console.error('Error processing file:', error)
+      toast.error('Failed to process file')
       setUploading(false)
-      return
     }
-
-    const { data: { publicUrl } } = supabase.storage
-      .from('uploads')
-      .getPublicUrl(fileName)
-
-    const { error } = await supabase.from('assignment_submissions').upsert({
-      assignment_id: selectedAssignment.id,
-      student_id: profile.id,
-      file_url: publicUrl,
-      file_name: uploadFile.name
-    }, { onConflict: 'assignment_id,student_id' })
-
-    if (error) {
-      toast.error(error.message)
-      setUploading(false)
-      return
-    }
-
-    toast.success('Assignment submitted successfully')
-    setSubmitDialogOpen(false)
-    setSelectedAssignment(null)
-    setUploadFile(null)
-    setUploading(false)
-    fetchAssignments()
   }
 
   const isOverdue = (dueDate: string) => new Date(dueDate) < new Date()
@@ -242,35 +330,35 @@ export default function AssignmentsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>Course</Label>
-                  <Select value={formData.course_id} onValueChange={(v) => setFormData({ ...formData, course_id: v })}>
+                  <Select value={formData.courseId} onValueChange={(v) => setFormData({ ...formData, courseId: v })}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select course" />
                     </SelectTrigger>
                     <SelectContent>
                       {courses.map((course) => (
-                        <SelectItem key={course.id} value={course.id}>{course.name}</SelectItem>
+                        <SelectItem key={course._id} value={course._id}>{course.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="due_date">Due Date</Label>
+                    <Label htmlFor="dueDate">Due Date</Label>
                     <Input
-                      id="due_date"
+                      id="dueDate"
                       type="datetime-local"
-                      value={formData.due_date}
-                      onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                      value={formData.dueDate}
+                      onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })}
                       required
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="max_score">Max Score</Label>
+                    <Label htmlFor="maxScore">Max Score</Label>
                     <Input
-                      id="max_score"
+                      id="maxScore"
                       type="number"
-                      value={formData.max_score}
-                      onChange={(e) => setFormData({ ...formData, max_score: e.target.value })}
+                      value={formData.maxScore}
+                      onChange={(e) => setFormData({ ...formData, maxScore: e.target.value })}
                       required
                     />
                   </div>
@@ -331,16 +419,16 @@ export default function AssignmentsPage() {
       ) : (
         <div className="grid md:grid-cols-2 gap-6">
           {assignments.map((assignment) => {
-            const submission = submissions[assignment.id]
-            const overdue = isOverdue(assignment.due_date)
+            const submission = submissions[assignment._id]
+            const overdue = isOverdue(assignment.dueDate)
             
             return (
-              <Card key={assignment.id} className="hover:shadow-lg transition-shadow">
+              <Card key={assignment._id} className="hover:shadow-lg transition-shadow">
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between">
                     <div>
                       <CardTitle className="text-lg">{assignment.title}</CardTitle>
-                      <CardDescription>{(assignment.course as Course)?.name}</CardDescription>
+                      <CardDescription>{assignment.course?.name}</CardDescription>
                     </div>
                     {profile.role === 'student' && (
                       submission ? (
@@ -363,9 +451,9 @@ export default function AssignmentsPage() {
                   <div className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-1 text-muted-foreground">
                       <Clock className="h-4 w-4" />
-                      Due: {format(new Date(assignment.due_date), 'MMM d, yyyy h:mm a')}
+                      Due: {format(new Date(assignment.dueDate), 'MMM d, yyyy h:mm a')}
                     </div>
-                    <span className="text-muted-foreground">Max: {assignment.max_score} pts</span>
+                    <span className="text-muted-foreground">Max: {assignment.maxScore} pts</span>
                   </div>
                   
                   {profile.role === 'student' && !submission && !overdue && (
@@ -384,7 +472,7 @@ export default function AssignmentsPage() {
                   {profile.role === 'student' && submission && (
                     <div className="flex items-center justify-between p-2 bg-slate-50 rounded-lg">
                       <span className="text-sm">Your submission</span>
-                      <a href={submission.file_url} target="_blank" rel="noopener noreferrer">
+                      <a href={submission.fileUrl} target="_blank" rel="noopener noreferrer">
                         <Button size="sm" variant="outline">
                           <Download className="h-4 w-4 mr-1" />
                           View
@@ -394,7 +482,7 @@ export default function AssignmentsPage() {
                   )}
                   
                   {canManage && (
-                    <Button size="sm" variant="destructive" onClick={() => handleDelete(assignment.id)}>
+                    <Button size="sm" variant="destructive" onClick={() => handleDelete(assignment._id)}>
                       <Trash2 className="h-4 w-4 mr-1" />
                       Delete
                     </Button>
@@ -408,3 +496,4 @@ export default function AssignmentsPage() {
     </div>
   )
 }
+

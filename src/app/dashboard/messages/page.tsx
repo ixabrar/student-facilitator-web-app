@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/components/providers/auth-provider'
-import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -15,7 +14,29 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { MessageSquare, Plus, Send, Inbox, Mail, MailOpen } from 'lucide-react'
-import type { Message, Profile } from '@/lib/supabase/types'
+
+// MongoDB TypeScript Interfaces
+interface Profile {
+  _id: string
+  fullName: string
+  email: string
+  role: 'student' | 'faculty' | 'admin'
+  createdAt: string
+  updatedAt: string
+}
+
+interface Message {
+  _id: string
+  senderId: string
+  recipientId: string
+  subject?: string
+  content: string
+  isRead: boolean
+  sender?: Profile
+  receiver?: Profile
+  createdAt: string
+  updatedAt: string
+}
 
 export default function MessagesPage() {
   const { profile } = useAuth()
@@ -30,28 +51,47 @@ export default function MessagesPage() {
     subject: '',
     content: ''
   })
-  const supabase = createClient()
 
   const fetchMessages = async () => {
-    const { data } = await supabase
-      .from('messages')
-      .select('*, sender:profiles!messages_sender_id_fkey(*), receiver:profiles!messages_receiver_id_fkey(*)')
-      .or(`sender_id.eq.${profile?.id},receiver_id.eq.${profile?.id}`)
-      .order('created_at', { ascending: false })
-    
-    if (data) setMessages(data as Message[])
-    setLoading(false)
+    try {
+      if (!profile?.userId) return
+      const response = await fetch(`/api/messages?userId=${profile.userId}`)
+      if (!response.ok) throw new Error('Failed to fetch messages')
+      const data = await response.json()
+      setMessages(data)
+    } catch (error) {
+      toast.error('Failed to load messages')
+      console.error(error)
+    } finally {
+      setLoading(false)
+    }
   }
 
   const fetchUsers = async () => {
-    let query = supabase.from('profiles').select('*').neq('id', profile?.id || '')
-    
-    if (profile?.role === 'student') {
-      query = query.in('role', ['faculty', 'admin'])
+    try {
+      const token = localStorage.getItem('authToken')
+      const response = await fetch('/api/profiles', {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        }
+      })
+      if (!response.ok) throw new Error('Failed to fetch users')
+      const data = await response.json()
+      
+      // Filter users: exclude self, and if student show only faculty/admin
+      const filtered = data.filter((user: Profile) => {
+        if (user._id === profile?._id) return false
+        if (profile?.role === 'student') {
+          return user.role === 'faculty' || user.role === 'admin'
+        }
+        return true
+      })
+      
+      setUsers(filtered.sort((a: Profile, b: Profile) => a.fullName.localeCompare(b.fullName)))
+    } catch (error) {
+      toast.error('Failed to load user list')
+      console.error(error)
     }
-    
-    const { data } = await query.order('full_name')
-    if (data) setUsers(data)
   }
 
   useEffect(() => {
@@ -65,35 +105,49 @@ export default function MessagesPage() {
     e.preventDefault()
     setSending(true)
     
-    const { error } = await supabase.from('messages').insert({
-      sender_id: profile?.id,
-      receiver_id: formData.receiver_id,
-      subject: formData.subject || null,
-      content: formData.content
-    })
-    
-    if (error) {
-      toast.error(error.message)
+    try {
+      const response = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderId: profile?.userId,
+          recipientId: formData.receiver_id,
+          content: formData.content
+        })
+      })
+      
+      if (!response.ok) throw new Error('Failed to send message')
+      
+      toast.success('Message sent successfully')
+      setDialogOpen(false)
+      setFormData({ receiver_id: '', subject: '', content: '' })
+      fetchMessages()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to send message')
+    } finally {
       setSending(false)
-      return
     }
-    
-    toast.success('Message sent successfully')
-    setDialogOpen(false)
-    setFormData({ receiver_id: '', subject: '', content: '' })
-    setSending(false)
-    fetchMessages()
   }
 
   const markAsRead = async (message: Message) => {
-    if (message.receiver_id === profile?.id && !message.is_read) {
-      await supabase.from('messages').update({ is_read: true }).eq('id', message.id)
-      fetchMessages()
+    if (message.receiverId === profile?._id && !message.isRead) {
+      try {
+        const response = await fetch(`/api/messages/${message._id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isRead: true })
+        })
+        
+        if (!response.ok) throw new Error('Failed to mark as read')
+        fetchMessages()
+      } catch (error) {
+        console.error('Error marking message as read:', error)
+      }
     }
     setSelectedMessage(message)
   }
 
-  const unreadCount = messages.filter(m => m.receiver_id === profile?.id && !m.is_read).length
+  const unreadCount = messages.filter(m => m.recipientId === profile?.userId && !m.isRead).length
 
   if (!profile) return null
 
@@ -126,8 +180,8 @@ export default function MessagesPage() {
                   </SelectTrigger>
                   <SelectContent>
                     {users.map((user) => (
-                      <SelectItem key={user.id} value={user.id}>
-                        {user.full_name} ({user.role})
+                      <SelectItem key={user._id} value={user.userId}>
+                        {user.fullName} ({user.role})
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -184,28 +238,28 @@ export default function MessagesPage() {
               ) : (
                 <div className="divide-y">
                   {messages.map((message) => {
-                    const isSent = message.sender_id === profile.id
+                    const isSent = message.senderId === profile?.userId
                     const otherUser = isSent ? message.receiver : message.sender
-                    const isUnread = !isSent && !message.is_read
+                    const isUnread = !isSent && !message.isRead
                     
                     return (
                       <button
-                        key={message.id}
+                        key={message._id}
                         onClick={() => markAsRead(message)}
                         className={`w-full p-4 text-left hover:bg-slate-50 transition-colors ${
-                          selectedMessage?.id === message.id ? 'bg-blue-50' : ''
+                          selectedMessage?._id === message._id ? 'bg-blue-50' : ''
                         } ${isUnread ? 'bg-blue-50/50' : ''}`}
                       >
                         <div className="flex items-start gap-3">
                           <Avatar className="h-10 w-10">
                             <AvatarFallback className="bg-blue-100 text-blue-600">
-                              {(otherUser as Profile)?.full_name?.charAt(0) || '?'}
+                              {(otherUser as Profile)?.fullName?.charAt(0) || '?'}
                             </AvatarFallback>
                           </Avatar>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between">
                               <p className={`text-sm truncate ${isUnread ? 'font-semibold' : 'font-medium'}`}>
-                                {isSent ? 'To: ' : ''}{(otherUser as Profile)?.full_name || 'Unknown'}
+                                {isSent ? 'To: ' : ''}{(otherUser as Profile)?.fullName || 'Unknown'}
                               </p>
                               {isUnread ? (
                                 <Mail className="h-4 w-4 text-blue-600 flex-shrink-0" />
@@ -218,7 +272,7 @@ export default function MessagesPage() {
                             )}
                             <p className="text-xs text-muted-foreground truncate">{message.content}</p>
                             <p className="text-xs text-muted-foreground mt-1">
-                              {format(new Date(message.created_at), 'MMM d, h:mm a')}
+                              {format(new Date(message.createdAt), 'MMM d, h:mm a')}
                             </p>
                           </div>
                         </div>
@@ -239,26 +293,26 @@ export default function MessagesPage() {
                   <div className="flex items-center gap-3">
                     <Avatar className="h-12 w-12">
                       <AvatarFallback className="bg-blue-100 text-blue-600 text-lg">
-                        {(selectedMessage.sender_id === profile.id 
-                          ? (selectedMessage.receiver as Profile)?.full_name 
-                          : (selectedMessage.sender as Profile)?.full_name
+                        {(selectedMessage.senderId === profile?.userId 
+                          ? (selectedMessage.receiver as Profile)?.fullName 
+                          : (selectedMessage.sender as Profile)?.fullName
                         )?.charAt(0) || '?'}
                       </AvatarFallback>
                     </Avatar>
                     <div>
                       <p className="font-semibold">
-                        {selectedMessage.sender_id === profile.id ? 'To: ' : 'From: '}
-                        {selectedMessage.sender_id === profile.id 
-                          ? (selectedMessage.receiver as Profile)?.full_name 
-                          : (selectedMessage.sender as Profile)?.full_name}
+                        {selectedMessage.senderId === profile?.userId ? 'To: ' : 'From: '}
+                        {selectedMessage.senderId === profile?.userId 
+                          ? (selectedMessage.receiver as Profile)?.fullName 
+                          : (selectedMessage.sender as Profile)?.fullName}
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        {format(new Date(selectedMessage.created_at), 'MMMM d, yyyy at h:mm a')}
+                        {format(new Date(selectedMessage.createdAt), 'MMMM d, yyyy at h:mm a')}
                       </p>
                     </div>
                   </div>
-                  <Badge variant={selectedMessage.sender_id === profile.id ? 'secondary' : 'default'}>
-                    {selectedMessage.sender_id === profile.id ? 'Sent' : 'Received'}
+                  <Badge variant={selectedMessage.senderId === profile?.userId ? 'secondary' : 'default'}>
+                    {selectedMessage.senderId === profile?.userId ? 'Sent' : 'Received'}
                   </Badge>
                 </div>
                 
@@ -285,3 +339,4 @@ export default function MessagesPage() {
     </div>
   )
 }
+
